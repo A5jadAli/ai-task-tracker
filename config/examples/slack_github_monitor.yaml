@@ -1,0 +1,123 @@
+# Agent Configuration Example
+# This demonstrates Slack and GitHub monitoring with automated workflows
+
+# Monitoring Configuration
+monitoring:
+  # Slack Integration
+  slack:
+    enabled: true
+    token: ${SLACK_BOT_TOKEN}
+    app_token: ${SLACK_APP_TOKEN}
+    channels:
+      - general
+      - dev-alerts
+    keywords:
+      - urgent
+      - help
+      - agent
+    actions:
+      - trigger: mention
+        workflow: respond_to_mention
+      - trigger: keyword
+        workflow: notify_admin
+
+  # GitHub Integration
+  github:
+    enabled: true
+    token: ${GITHUB_TOKEN}
+    repos:
+      - owner/repo-name
+    poll_interval: 300  # 5 minutes
+    min_approvals: 2
+    require_ci_pass: true
+    actions:
+      - trigger: pr_ready_to_merge
+        workflow: auto_merge_pr
+      - trigger: pr_needs_review
+        workflow: notify_slack_review
+
+# Scheduled Tasks
+scheduled_tasks:
+  - name: check_pr_status
+    schedule: "*/15 * * * *"  # Every 15 minutes
+    workflow: check_github_prs
+  
+  - name: daily_standup_reminder
+    schedule: "0 9 * * 1-5"  # 9 AM weekdays
+    workflow: send_standup_reminder
+
+# Workflows
+workflows:
+  respond_to_mention:
+    steps:
+      - type: ai
+        action: analyze_message
+        params:
+          objective: "Analyze Slack message and determine appropriate response"
+      - type: slack
+        action: send_reply
+        params:
+          use_ai_response: true
+  
+  auto_merge_pr:
+    steps:
+      - type: github
+        action: merge_pr
+        params:
+          merge_method: squash
+      - type: slack
+        action: send_message
+        params:
+          channel: dev-team
+          message: "Auto-merged PR: {pr.title}"
+  
+  notify_slack_review:
+    steps:
+      - type: slack
+        action: send_message
+        params:
+          channel: dev-team
+          message: "PR needs review: {pr.title} - {pr.url}"
+  
+  check_github_prs:
+    steps:
+      - type: github
+        action: check_all_prs
+      - type: log
+        message: "Checked all PRs"
+  
+  send_standup_reminder:
+    steps:
+      - type: slack
+        action: send_message
+        params:
+          channel: general
+          message: "Daily standup in 30 minutes! 🚀"
+
+# AI Configuration
+ai:
+  provider: gemini
+  model: gemini-2.0-flash-exp
+  fallback_provider: openai
+  rate_limit_per_minute: 15
+  enable_cache: true
+  cache_ttl_minutes: 60
+
+# Logging
+logging:
+  level: INFO
+  file: logs/agent.log
+  max_size_mb: 100
+  backup_count: 5
+  json_format: true
+
+# Task Queue
+task_queue:
+  num_workers: 3
+  max_queue_size: 100
+
+# General Settings
+agent:
+  human_in_the_loop: false
+  max_retries: 3
+  retry_delay_seconds: 5

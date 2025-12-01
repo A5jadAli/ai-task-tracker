@@ -1,0 +1,28 @@
+# Core Dependencies
+pyautogui==0.9.54
+google-generativeai==0.8.5
+openai==1.54.4
+python-dotenv==1.0.1
+Pillow==10.4.0
+psutil==6.1.0
+
+# Integrations
+slack-sdk==3.33.4
+PyGithub==2.5.0
+
+# Scheduling & Background Tasks
+APScheduler==3.10.4
+
+# API Server (Optional)
+Flask==3.1.0
+Flask-CORS==5.0.0
+
+# Configuration
+PyYAML==6.0.2
+
+# Logging
+python-json-logger==3.2.1
+
+# Utilities
+requests==2.32.3
+cachetools==5.5.0
