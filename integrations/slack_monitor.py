@@ -201,6 +201,16 @@ class SlackMonitor(BaseMonitor):
         channel = event.get("channel")
         channel_type = event.get("channel_type", "")
         
+        # Check for commands in command channel (if configured)
+        command_channel = self.config.get('command_channel')
+        if command_channel and channel == command_channel:
+            # Check if this looks like a command
+            command_prefix = self.config.get('command_prefix', 'agent')
+            if text.strip().lower().startswith(command_prefix.lower()):
+                logger.info(f"Command detected in channel {channel}")
+                self.trigger_callbacks("command", event)
+                return  # Don't process as regular message
+        
         # Check for user mentions in user mode
         if self.mode == 'user' and self._is_user_mentioned(text):
             logger.info(f"User mentioned in {channel_type} {channel}")

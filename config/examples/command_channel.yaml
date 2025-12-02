@@ -1,0 +1,134 @@
+# Agent Configuration - Command Channel Example
+# This demonstrates using a dedicated Slack channel for agent commands
+
+# Monitoring Configuration
+monitoring:
+  # Slack Integration - Command Channel Mode
+  slack:
+    enabled: true
+    mode: user                        # Use 'user' mode for personal account
+    user_token: ${SLACK_USER_TOKEN}
+    user_id: ${SLACK_USER_ID}
+    
+    # Command channel configuration
+    command_channel: C01234567890     # YOUR #agent-commands channel ID
+    command_prefix: "agent"           # Commands start with "agent"
+    
+    # Still monitor other channels for mentions/DMs
+    monitor_dms: true
+    keywords:
+      - urgent
+      - help
+    
+    actions:
+      - trigger: command              # Commands in command channel
+        workflow: execute_command
+      - trigger: user_mention         # Mentions in other channels
+        workflow: respond_to_mention
+      - trigger: dm_received
+        workflow: respond_to_dm
+
+  # GitHub Integration
+  github:
+    enabled: true
+    mode: user
+    personal_token: ${GITHUB_PERSONAL_TOKEN}
+    username: ${GITHUB_USERNAME}
+    repos:
+      - your-org/your-repo            # Default repo for commands
+    monitor_user_notifications: true
+    monitor_user_mentions: true
+    actions:
+      - trigger: user_mentioned_in_pr
+        workflow: notify_pr_mention
+      - trigger: user_assigned_to_pr
+        workflow: notify_pr_assignment
+
+# Scheduled Tasks
+scheduled_tasks:
+  - name: daily_pr_check
+    schedule: "0 9 * * 1-5"  # 9 AM weekdays
+    workflow: check_github_prs
+
+# Workflows
+workflows:
+  execute_command:
+    # Commands are handled by the command system
+    # No steps needed - the command executor handles everything
+    steps: []
+  
+  respond_to_mention:
+    steps:
+      - type: ai
+        action: analyze_message
+        params:
+          objective: "Analyze message where I was mentioned and respond"
+      - type: slack
+        action: send_reply
+        params:
+          use_ai_response: true
+  
+  respond_to_dm:
+    steps:
+      - type: ai
+        action: analyze_message
+        params:
+          objective: "Analyze DM and provide helpful response"
+      - type: slack
+        action: send_reply
+        params:
+          use_ai_response: true
+  
+  notify_pr_mention:
+    steps:
+      - type: slack
+        action: send_message
+        params:
+          channel: ${command_channel}
+          message: "You were mentioned in PR: {pr.title} - {pr.url}"
+  
+  notify_pr_assignment:
+    steps:
+      - type: slack
+        action: send_message
+        params:
+          channel: ${command_channel}
+          message: "You were assigned to PR: {pr.title} - {pr.url}"
+  
+  check_github_prs:
+    steps:
+      - type: github
+        action: check_all_prs
+      - type: slack
+        action: send_message
+        params:
+          channel: ${command_channel}
+          message: "Daily PR check complete"
+
+# AI Configuration
+ai:
+  provider: gemini
+  model: gemini-2.0-flash-exp
+  fallback_provider: openai
+  rate_limit_per_minute: 15
+  enable_cache: true
+  cache_ttl_minutes: 60
+
+# Logging
+logging:
+  level: INFO
+  file: logs/agent.log
+  max_size_mb: 100
+  backup_count: 5
+  json_format: true
+
+# Task Queue
+task_queue:
+  num_workers: 3
+  max_queue_size: 100
+
+# General Settings
+agent:
+  human_in_the_loop: false
+  max_retries: 3
+  retry_delay_seconds: 5

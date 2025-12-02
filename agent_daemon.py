@@ -132,6 +132,15 @@ class AgentDaemon:
         self.rate_limiter.add_provider('openai', 60, 60)
         logger.info("✓ Rate limiter configured")
         
+        # Command system
+        from agent.commands.registry import CommandRegistry
+        from agent.commands.parser import CommandParser
+        
+        command_prefix = self.config.get('monitoring', {}).get('slack', {}).get('command_prefix', 'agent')
+        self.command_registry = CommandRegistry()
+        self.command_parser = CommandParser(prefix=command_prefix)
+        logger.info("✓ Command system initialized")
+        
         # Agent
         self.agent = AutonomousAgent()
         logger.info("✓ Agent initialized")
@@ -153,9 +162,14 @@ class AgentDaemon:
                 slack_monitor.register_callback('user_mention', self._handle_slack_user_mention)
                 slack_monitor.register_callback('dm_received', self._handle_slack_dm)
                 slack_monitor.register_callback('keyword', self._handle_slack_keyword)
+                slack_monitor.register_callback('command', self._handle_command)
                 
                 slack_monitor.start(slack_config)
                 self.monitors['slack'] = slack_monitor
+                
+                # Register built-in commands after Slack monitor is available
+                self._register_builtin_commands()
+                
                 logger.info("✓ Slack monitor started")
             except Exception as e:
                 logger.error(f"Failed to start Slack monitor: {e}")
@@ -209,6 +223,43 @@ class AgentDaemon:
         
         workflows = self.config.get('workflows', {})
         logger.info(f"✓ Loaded {len(workflows)} workflows")
+    
+    def _register_builtin_commands(self):
+        """Register built-in commands."""
+        logger.info("Registering built-in commands...")
+        
+        try:
+            from agent.commands.builtin.github_commands import (
+                CreatePRCommand,
+                MergePRCommand,
+                CheckPRsCommand,
+                CommentPRCommand,
+            )
+            from agent.commands.builtin.system_commands import (
+                HelpCommand,
+                StatusCommand,
+                ListCommandsCommand,
+            )
+            
+            # Register GitHub commands if GitHub monitor is available
+            if 'github' in self.monitors:
+                github = self.monitors['github']
+                self.command_registry.register(CreatePRCommand(github))
+                self.command_registry.register(MergePRCommand(github))
+                self.command_registry.register(CheckPRsCommand(github))
+                self.command_registry.register(CommentPRCommand(github))
+                logger.info("✓ Registered GitHub commands")
+            
+            # Register system commands
+            self.command_registry.register(HelpCommand(self.command_registry))
+            self.command_registry.register(StatusCommand(self))
+            self.command_registry.register(ListCommandsCommand(self.command_registry))
+            logger.info("✓ Registered system commands")
+            
+            logger.info(f"✓ Total commands registered: {len(self.command_registry)}")
+        
+        except Exception as e:
+            logger.error(f"Failed to register commands: {e}", exc_info=True)
     
     def _execute_workflow(self, workflow_name: str, context: dict):
         """
@@ -465,6 +516,58 @@ class AgentDaemon:
                         workflow,
                         {'notification': data}
                     )
+    
+    def _handle_command(self, event: dict):
+        """Handle command from Slack."""
+        text = event.get('text', '')
+        channel = event.get('channel')
+        thread_ts = event.get('ts')
+        user_id = event.get('user')
+        
+        logger.info(f"Handling command from user {user_id}: {text}")
+        
+        # Parse command
+        parsed = self.command_parser.parse(text)
+        if not parsed:
+            logger.warning(f"Failed to parse command: {text}")
+            return
+        
+        # Create execution context
+        context = {
+            'channel': channel,
+            'thread_ts': thread_ts,
+            'event': event,
+            'user_id': user_id,
+            'default_repo': self.config.get('monitoring', {}).get('github', {}).get('repos', [None])[0]
+        }
+        
+        # Execute command asynchronously
+        self.task_queue.add_task(
+            self._execute_command_async,
+            parsed,
+            context
+        )
+    
+    async def _execute_command_async(self, parsed_cmd, context):
+        """Execute command asynchronously."""
+        from agent.commands.executor import CommandExecutor
+        from agent.commands.reporter import StatusReporter
+        
+        # Create reporter and executor
+        reporter = StatusReporter(self.monitors.get('slack'))
+        executor = CommandExecutor(
+            self.command_registry,
+            status_callback=reporter.report,
+            timeout=300
+        )
+        
+        # Execute command
+        result = await executor.execute(parsed_cmd, context)
+        
+        logger.info(
+            f"Command {parsed_cmd.command} completed: "
+            f"success={result.success}"
+        )
     
     def _main_loop(self):
         """Main daemon loop."""
