@@ -1,5 +1,6 @@
 """
 GitHub integration for monitoring PRs and managing repositories.
+Supports both bot mode and user mode (personal account).
 """
 import os
 import time
@@ -13,7 +14,12 @@ logger = get_logger(__name__)
 
 
 class GitHubMonitor(BaseMonitor):
-    """Monitor GitHub for PR events and repository changes."""
+    """Monitor GitHub for PR events and repository changes.
+    
+    Supports two modes:
+    - Bot mode: Uses generic token, monitors all PRs
+    - User mode: Uses personal token, monitors user-specific events
+    """
     
     def __init__(self):
         super().__init__("GitHubMonitor")
@@ -22,23 +28,38 @@ class GitHubMonitor(BaseMonitor):
         self.poll_interval = 60  # seconds
         self.thread = None
         self.last_check = {}
+        self.mode = "bot"  # "bot" or "user"
+        self.username = None  # For user mode
     
     def start(self, config: Dict[str, Any]):
         """
         Start GitHub monitoring.
         
         Args:
-            config: GitHub configuration with 'token' and 'repos'
+            config: GitHub configuration with tokens and mode
+                For bot mode: 'token' and 'repos'
+                For user mode: 'personal_token', 'username', and 'repos'
         """
         if self.running:
             logger.warning("GitHub monitor already running")
             return
         
         self.config = config
-        token = config.get('token') or os.getenv('GITHUB_TOKEN')
+        self.mode = config.get('mode', 'bot')  # Default to bot mode for backward compatibility
+        
+        # Determine which token to use based on mode
+        if self.mode == 'user':
+            token = config.get('personal_token') or os.getenv('GITHUB_PERSONAL_TOKEN')
+            self.username = config.get('username') or os.getenv('GITHUB_USERNAME')
+            
+            if not self.username:
+                logger.warning("Username not provided for user mode")
+        else:
+            # Bot mode (legacy)
+            token = config.get('token') or os.getenv('GITHUB_TOKEN')
         
         if not token:
-            logger.error("GitHub token not configured")
+            logger.error(f"GitHub token not configured for {self.mode} mode")
             return
         
         try:
@@ -46,12 +67,19 @@ class GitHubMonitor(BaseMonitor):
             self.repos = config.get('repos', [])
             self.poll_interval = config.get('poll_interval', 60)
             
+            # Verify authentication in user mode
+            if self.mode == 'user':
+                user = self.gh.get_user()
+                logger.info(f"Authenticated as GitHub user: {user.login}")
+                if not self.username:
+                    self.username = user.login
+            
             # Start monitoring thread
             self.running = True
             self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
             self.thread.start()
             
-            logger.info(f"GitHub monitor started for {len(self.repos)} repos")
+            logger.info(f"GitHub monitor started in {self.mode} mode for {len(self.repos)} repos")
         
         except Exception as e:
             logger.error(f"Failed to start GitHub monitor: {e}", exc_info=True)
@@ -68,8 +96,13 @@ class GitHubMonitor(BaseMonitor):
         """Main monitoring loop."""
         while self.running:
             try:
+                # Check repositories
                 for repo_name in self.repos:
                     self._check_repo(repo_name)
+                
+                # Check user notifications in user mode
+                if self.mode == 'user' and self.config.get('monitor_user_notifications', True):
+                    self._check_user_notifications()
                 
                 time.sleep(self.poll_interval)
             
@@ -92,6 +125,25 @@ class GitHubMonitor(BaseMonitor):
             
             for pr in prs:
                 pr_key = f"{repo_name}#{pr.number}"
+                
+                # Check if user is mentioned (user mode)
+                if self.mode == 'user' and self.config.get('monitor_user_mentions', True):
+                    if self._is_user_mentioned_in_pr(pr):
+                        self.trigger_callbacks("user_mentioned_in_pr", {
+                            "repo": repo_name,
+                            "pr": pr,
+                            "number": pr.number,
+                            "title": pr.title
+                        })
+                
+                # Check if user is assigned (user mode)
+                if self.mode == 'user' and self._is_user_assigned(pr):
+                    self.trigger_callbacks("user_assigned_to_pr", {
+                        "repo": repo_name,
+                        "pr": pr,
+                        "number": pr.number,
+                        "title": pr.title
+                    })
                 
                 # Check if PR is ready to merge
                 if self._is_ready_to_merge(pr):
@@ -231,3 +283,105 @@ class GitHubMonitor(BaseMonitor):
         except Exception as e:
             logger.error(f"Error getting PRs: {e}", exc_info=True)
             return []
+    
+    def _is_user_mentioned_in_pr(self, pr) -> bool:
+        """Check if the authenticated user is mentioned in PR.
+        
+        Args:
+            pr: Pull request object
+            
+        Returns:
+            True if user is mentioned
+        """
+        if not self.username:
+            return False
+        
+        try:
+            # Check PR body
+            if pr.body and f"@{self.username}" in pr.body:
+                return True
+            
+            # Check comments
+            for comment in pr.get_issue_comments():
+                if comment.body and f"@{self.username}" in comment.body:
+                    return True
+            
+            # Check review comments
+            for comment in pr.get_review_comments():
+                if comment.body and f"@{self.username}" in comment.body:
+                    return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking user mention: {e}", exc_info=True)
+            return False
+    
+    def _is_user_assigned(self, pr) -> bool:
+        """Check if the authenticated user is assigned to PR.
+        
+        Args:
+            pr: Pull request object
+            
+        Returns:
+            True if user is assigned
+        """
+        if not self.username:
+            return False
+        
+        try:
+            assignees = [a.login for a in pr.assignees]
+            return self.username in assignees
+        except Exception as e:
+            logger.error(f"Error checking user assignment: {e}", exc_info=True)
+            return False
+    
+    def _check_user_notifications(self):
+        """Check user's GitHub notifications (user mode only)."""
+        if not self.username:
+            return
+        
+        try:
+            # Get unread notifications
+            notifications = self.gh.get_user().get_notifications(all=False)
+            
+            for notification in notifications:
+                notif_key = f"{notification.id}"
+                
+                # Skip if we've already processed this notification
+                if notif_key in self.last_check:
+                    continue
+                
+                # Trigger callback for new notification
+                self.trigger_callbacks("user_notification", {
+                    "id": notification.id,
+                    "reason": notification.reason,
+                    "subject": notification.subject,
+                    "repository": notification.repository.full_name,
+                    "updated_at": notification.updated_at
+                })
+                
+                self.last_check[notif_key] = time.time()
+                
+        except Exception as e:
+            logger.error(f"Error checking user notifications: {e}", exc_info=True)
+    
+    def add_comment_to_pr(self, repo_name: str, pr_number: int, comment: str):
+        """Add a comment to a pull request.
+        
+        Args:
+            repo_name: Repository name
+            pr_number: PR number
+            comment: Comment text
+            
+        Returns:
+            True if comment added successfully
+        """
+        try:
+            repo = self.gh.get_repo(repo_name)
+            pr = repo.get_pull(pr_number)
+            pr.create_issue_comment(comment)
+            logger.info(f"Added comment to PR #{pr_number} in {repo_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error adding comment: {e}", exc_info=True)
+            return False

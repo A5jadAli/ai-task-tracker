@@ -1,13 +1,15 @@
-# Agent Configuration Example
-# This demonstrates Slack and GitHub monitoring with automated workflows
+# Agent Configuration Example - Personal Account Mode
+# This demonstrates Slack and GitHub monitoring using YOUR personal accounts
 
 # Monitoring Configuration
 monitoring:
-  # Slack Integration
+  # Slack Integration - Personal Account Mode
   slack:
     enabled: true
-    token: ${SLACK_BOT_TOKEN}
-    app_token: ${SLACK_APP_TOKEN}
+    mode: user                        # NEW: 'user' mode for personal account
+    user_token: ${SLACK_USER_TOKEN}   # Your personal Slack token
+    user_id: ${SLACK_USER_ID}         # Your Slack user ID
+    monitor_dms: true                 # Monitor direct messages
     channels:
       - general
       - dev-alerts
@@ -16,21 +18,33 @@ monitoring:
       - help
       - agent
     actions:
-      - trigger: mention
+      - trigger: user_mention          # Triggered when YOU are mentioned
         workflow: respond_to_mention
+      - trigger: dm_received            # NEW: Triggered when you receive a DM
+        workflow: respond_to_dm
       - trigger: keyword
         workflow: notify_admin
 
-  # GitHub Integration
+  # GitHub Integration - Personal Account Mode
   github:
     enabled: true
-    token: ${GITHUB_TOKEN}
+    mode: user                                    # NEW: 'user' mode for personal account
+    personal_token: ${GITHUB_PERSONAL_TOKEN}      # Your personal access token
+    username: ${GITHUB_USERNAME}                  # Your GitHub username
     repos:
       - owner/repo-name
+    monitor_user_notifications: true              # NEW: Monitor your notifications
+    monitor_user_mentions: true                   # NEW: Monitor when you're mentioned
     poll_interval: 300  # 5 minutes
     min_approvals: 2
     require_ci_pass: true
     actions:
+      - trigger: user_mentioned_in_pr             # NEW: When you're mentioned in a PR
+        workflow: respond_to_pr_mention
+      - trigger: user_assigned_to_pr              # NEW: When you're assigned to a PR
+        workflow: handle_pr_assignment
+      - trigger: user_notification                # NEW: When you get a GitHub notification
+        workflow: process_notification
       - trigger: pr_ready_to_merge
         workflow: auto_merge_pr
       - trigger: pr_needs_review
@@ -53,11 +67,50 @@ workflows:
       - type: ai
         action: analyze_message
         params:
-          objective: "Analyze Slack message and determine appropriate response"
+          objective: "Analyze Slack message where I was mentioned and determine appropriate response"
       - type: slack
         action: send_reply
         params:
           use_ai_response: true
+  
+  respond_to_dm:
+    steps:
+      - type: ai
+        action: analyze_message
+        params:
+          objective: "Analyze DM and determine if it needs a response"
+      - type: slack
+        action: send_reply
+        params:
+          use_ai_response: true
+  
+  respond_to_pr_mention:
+    steps:
+      - type: ai
+        action: analyze_pr
+        params:
+          objective: "Analyze why I was mentioned in this PR"
+      - type: github
+        action: add_comment
+        params:
+          use_ai_response: true
+  
+  handle_pr_assignment:
+    steps:
+      - type: slack
+        action: send_message
+        params:
+          channel: dev-team
+          message: "I've been assigned to PR: {pr.title} - {pr.url}"
+      - type: ai
+        action: analyze_pr
+        params:
+          objective: "Review the PR I was assigned to"
+  
+  process_notification:
+    steps:
+      - type: log
+        message: "Received GitHub notification: {notification.subject}"
   
   auto_merge_pr:
     steps:
@@ -121,3 +174,4 @@ agent:
   human_in_the_loop: false
   max_retries: 3
   retry_delay_seconds: 5
+

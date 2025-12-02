@@ -148,8 +148,10 @@ class AgentDaemon:
             try:
                 slack_monitor = SlackMonitor()
                 
-                # Register callbacks
+                # Register callbacks for both bot and user modes
                 slack_monitor.register_callback('mention', self._handle_slack_mention)
+                slack_monitor.register_callback('user_mention', self._handle_slack_user_mention)
+                slack_monitor.register_callback('dm_received', self._handle_slack_dm)
                 slack_monitor.register_callback('keyword', self._handle_slack_keyword)
                 
                 slack_monitor.start(slack_config)
@@ -164,9 +166,12 @@ class AgentDaemon:
             try:
                 github_monitor = GitHubMonitor()
                 
-                # Register callbacks
+                # Register callbacks for both bot and user modes
                 github_monitor.register_callback('pr_ready_to_merge', self._handle_pr_ready)
                 github_monitor.register_callback('pr_needs_review', self._handle_pr_review)
+                github_monitor.register_callback('user_mentioned_in_pr', self._handle_user_mentioned_in_pr)
+                github_monitor.register_callback('user_assigned_to_pr', self._handle_user_assigned_to_pr)
+                github_monitor.register_callback('user_notification', self._handle_user_notification)
                 
                 github_monitor.start(github_config)
                 self.monitors['github'] = github_monitor
@@ -278,6 +283,11 @@ class AgentDaemon:
             pr_number = context.get('number')
             merge_method = params.get('merge_method', 'merge')
             github.merge_pr(repo, pr_number, merge_method)
+        elif action == 'add_comment':
+            repo = context.get('repo')
+            pr_number = context.get('number')
+            comment = params.get('comment', context.get('ai_response', ''))
+            github.add_comment_to_pr(repo, pr_number, comment)
         elif action == 'check_all_prs':
             # This is handled by the monitor's polling
             pass
@@ -356,6 +366,104 @@ class AgentDaemon:
                         self._execute_workflow,
                         workflow,
                         data
+                    )
+    
+    def _handle_slack_user_mention(self, event: dict):
+        """Handle Slack user mention events (user mode)."""
+        logger.info("Handling Slack user mention")
+        self.dispatcher.dispatch('slack_user_mention', event)
+        
+        # Execute configured workflow
+        monitoring_config = self.config.get('monitoring', {})
+        slack_actions = monitoring_config.get('slack', {}).get('actions', [])
+        
+        for action_config in slack_actions:
+            if action_config.get('trigger') == 'user_mention':
+                workflow = action_config.get('workflow')
+                if workflow:
+                    self.task_queue.add_task(
+                        self._execute_workflow,
+                        workflow,
+                        {'event': event}
+                    )
+    
+    def _handle_slack_dm(self, event: dict):
+        """Handle Slack DM events (user mode)."""
+        logger.info("Handling Slack DM")
+        self.dispatcher.dispatch('slack_dm', event)
+        
+        # Execute configured workflow
+        monitoring_config = self.config.get('monitoring', {})
+        slack_actions = monitoring_config.get('slack', {}).get('actions', [])
+        
+        for action_config in slack_actions:
+            if action_config.get('trigger') == 'dm_received':
+                workflow = action_config.get('workflow')
+                if workflow:
+                    self.task_queue.add_task(
+                        self._execute_workflow,
+                        workflow,
+                        {'event': event}
+                    )
+    
+    def _handle_user_mentioned_in_pr(self, data: dict):
+        """Handle user mentioned in PR events (user mode)."""
+        repo = data.get('repo')
+        pr_number = data.get('number')
+        logger.info(f"User mentioned in PR: {repo}#{pr_number}")
+        
+        # Execute configured workflow
+        monitoring_config = self.config.get('monitoring', {})
+        github_actions = monitoring_config.get('github', {}).get('actions', [])
+        
+        for action_config in github_actions:
+            if action_config.get('trigger') == 'user_mentioned_in_pr':
+                workflow = action_config.get('workflow')
+                if workflow:
+                    self.task_queue.add_task(
+                        self._execute_workflow,
+                        workflow,
+                        data
+                    )
+    
+    def _handle_user_assigned_to_pr(self, data: dict):
+        """Handle user assigned to PR events (user mode)."""
+        repo = data.get('repo')
+        pr_number = data.get('number')
+        logger.info(f"User assigned to PR: {repo}#{pr_number}")
+        
+        # Execute configured workflow
+        monitoring_config = self.config.get('monitoring', {})
+        github_actions = monitoring_config.get('github', {}).get('actions', [])
+        
+        for action_config in github_actions:
+            if action_config.get('trigger') == 'user_assigned_to_pr':
+                workflow = action_config.get('workflow')
+                if workflow:
+                    self.task_queue.add_task(
+                        self._execute_workflow,
+                        workflow,
+                        data
+                    )
+    
+    def _handle_user_notification(self, data: dict):
+        """Handle GitHub user notification events (user mode)."""
+        notification_id = data.get('id')
+        reason = data.get('reason')
+        logger.info(f"User notification: {reason} (ID: {notification_id})")
+        
+        # Execute configured workflow
+        monitoring_config = self.config.get('monitoring', {})
+        github_actions = monitoring_config.get('github', {}).get('actions', [])
+        
+        for action_config in github_actions:
+            if action_config.get('trigger') == 'user_notification':
+                workflow = action_config.get('workflow')
+                if workflow:
+                    self.task_queue.add_task(
+                        self._execute_workflow,
+                        workflow,
+                        {'notification': data}
                     )
     
     def _main_loop(self):
