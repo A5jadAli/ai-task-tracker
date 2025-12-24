@@ -1,28 +1,43 @@
-# Core Dependencies
-pyautogui==0.9.54
-google-generativeai==0.8.5
-openai==1.54.4
-python-dotenv==1.0.1
-Pillow==10.4.0
-psutil==6.1.0
+# FastAPI
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
 
-# Integrations
-slack-sdk==3.33.4
-PyGithub==2.5.0
+# LangChain & LangGraph
+langchain==0.1.4
+langchain-openai==0.0.5
+langgraph==0.0.20
+langchain-community==0.0.17
 
-# Scheduling & Background Tasks
-APScheduler==3.10.4
+# OpenAI
+openai==1.10.0
 
-# API Server (Optional)
-Flask==3.1.0
-Flask-CORS==5.0.0
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
 
-# Configuration
-PyYAML==6.0.2
+# Vector Store
+chromadb==0.4.22
 
-# Logging
-python-json-logger==3.2.1
+# Git
+GitPython==3.1.41
+
+# Background Tasks
+celery==5.3.6
+redis==5.0.1
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
 
 # Utilities
-requests==2.32.3
-cachetools==5.5.0
+python-dotenv==1.0.0
+aiofiles==23.2.1
+httpx==0.26.0
+python-multipart==0.0.6
+
+# Monitoring & Logging
+loguru==0.7.2
