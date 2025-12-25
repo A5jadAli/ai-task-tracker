@@ -50,3 +50,6 @@ htmlcov/
 # Alembic
 alembic/versions/*.py
 !alembic/versions/__init__.py
+
+# add setup_project file in root here
+setup_project.py
