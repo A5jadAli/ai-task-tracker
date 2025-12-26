@@ -1,3 +1,5 @@
+# app/api/schemas/project.py (REPLACE EXISTING FILE)
+
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -9,6 +11,13 @@ class ProjectCreate(BaseModel):
     repository_url: str = Field(..., description="Git repository URL")
     description: Optional[str] = Field(None, description="Project description")
     context: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class ProjectUpdate(BaseModel):
+    """Schema for updating project"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
 
 
 class ProjectResponse(BaseModel):
