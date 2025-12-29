@@ -5,7 +5,7 @@ from loguru import logger
 import sys
 
 from app.config import settings
-from app.api.routes import tasks, projects, status
+from app.api.routes import tasks, projects, status, auth, websocket
 
 
 # Configure logging
@@ -46,6 +46,8 @@ app.add_middleware(
 app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 app.include_router(status.router, prefix="/api", tags=["Status"])
+app.include_router(auth.router, prefix="/api", tags=["Auth"])
+app.include_router(websocket.router, tags=["WebSocket"])
 
 
 @app.get("/")
