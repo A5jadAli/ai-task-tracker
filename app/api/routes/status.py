@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from app.models.database import get_db, Task, TaskEvent
+from app.utils.progress import calculate_progress
 from loguru import logger
 import uuid
 
@@ -21,21 +22,7 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
             TaskEvent.task_id == task.id
         ).order_by(TaskEvent.created_at.desc()).limit(10).all()
         
-        # Calculate progress
-        status_progress = {
-            "pending": 0,
-            "git_sync": 10,
-            "planning": 30,
-            "awaiting_approval": 40,
-            "approved": 45,
-            "in_progress": 60,
-            "testing": 80,
-            "completed": 100,
-            "failed": 0,
-            "rejected": 0
-        }
-        
-        progress = status_progress.get(task.status.value, 0)
+        progress = calculate_progress(task.status)
         
         # Get logs from events
         logs = [f"{e.created_at.strftime('%H:%M:%S')} - {e.event_type}: {e.data.get('message', '')}" 
@@ -59,12 +46,3 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Failed to get status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "service": "AI Coding Assistant"
-    }
