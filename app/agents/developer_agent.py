@@ -183,32 +183,59 @@ Return ONLY valid JSON, nothing else. If no files found, return empty arrays.
             # Get context from similar files if they exist
             context_code = await self._get_context_from_repo(file_path, repository_path)
 
+            # Get related files for better context
+            related_imports = await self._get_related_imports(file_path, repository_path)
+
             prompt = f"""You are an expert software developer. Generate complete, production-ready code for a new file.
 
+## CRITICAL INSTRUCTIONS
+1. Follow the implementation plan EXACTLY - don't add features not mentioned in the plan
+2. Use the SAME coding patterns and structure as the similar files shown below
+3. Match the existing project's architecture and conventions
+4. Implement ALL requirements specified in the purpose and plan
+5. Write production-ready code with NO TODOs, placeholders, or incomplete sections
+
+## FILE TO CREATE
 FILE PATH: {file_path}
 PURPOSE: {purpose}
 
-PROJECT CONTEXT:
+## PROJECT CONTEXT
 - Tech Stack: {project_context.get('tech_stack', 'Python')}
 - Coding Style: {project_context.get('coding_style', 'PEP 8')}
 - Test Framework: {project_context.get('test_framework', 'pytest')}
 
-IMPLEMENTATION PLAN EXCERPT:
-{plan[:1500]}
+## IMPLEMENTATION PLAN
+{plan[:2000]}
 
-SIMILAR FILES IN REPO (for reference):
-{context_code[:1000] if context_code else 'No similar files found'}
+## SIMILAR FILES IN REPO (for reference - match this style):
+{context_code[:1500] if context_code else 'No similar files found'}
 
-REQUIREMENTS:
-1. Write complete, working code (no TODOs or placeholders)
-2. Include all necessary imports
-3. Add proper error handling
-4. Include docstrings for functions/classes
-5. Follow the project's coding style
-6. Make the code production-ready
-7. Add type hints where appropriate
+## RELATED IMPORTS/MODULES TO USE:
+{related_imports if related_imports else 'Determine based on requirements'}
 
-Generate ONLY the code content for {file_path}, no explanations or markdown:
+## STRICT REQUIREMENTS
+1. Write COMPLETE, working code (no TODOs or placeholders)
+2. Include ALL necessary imports at the top
+3. Add comprehensive error handling with try-except blocks
+4. Include detailed docstrings for ALL functions/classes (Google/NumPy style)
+5. Follow the project's existing coding style strictly
+6. Add type hints for ALL function parameters and return values
+7. Add logging statements for important operations
+8. Include input validation where appropriate
+9. Make the code production-ready and secure
+10. Follow security best practices (validate inputs, handle errors, no SQL injection, etc.)
+
+## CODE STRUCTURE REQUIREMENTS
+- Start with imports (standard library, third-party, local)
+- Add module-level docstring
+- Define classes/functions with proper docstrings
+- Add main execution block if applicable
+- Include proper error handling
+- Add logging for debugging
+
+Generate ONLY the complete, production-ready code content for {file_path}.
+Do not include explanations, markdown formatting, or comments about what you're doing.
+Just output the raw Python/JavaScript/etc code:
 """
 
             response = await self.llm.ainvoke(prompt)
@@ -231,6 +258,33 @@ Generate ONLY the code content for {file_path}, no explanations or markdown:
             logger.error(f"Failed to generate code for {file_path}: {e}")
             raise
 
+    async def _get_related_imports(self, file_path: str, repository_path: Path) -> str:
+        """Get related modules/imports that should be used"""
+        try:
+            # Determine what imports might be needed based on file location
+            path_parts = Path(file_path).parts
+            related = []
+
+            # For Python files
+            if file_path.endswith('.py'):
+                # Check for common module patterns
+                if 'routes' in path_parts or 'api' in path_parts:
+                    related.append("from fastapi import APIRouter, HTTPException, Depends")
+                    related.append("from loguru import logger")
+                if 'models' in path_parts:
+                    related.append("from sqlalchemy import Column, String, Integer, DateTime")
+                    related.append("from pydantic import BaseModel, Field")
+                if 'services' in path_parts:
+                    related.append("from loguru import logger")
+                if 'test' in file_path.lower():
+                    related.append("import pytest")
+                    related.append("from unittest.mock import Mock, patch")
+
+            return "\n".join(related) if related else ""
+        except Exception as e:
+            logger.warning(f"Could not determine related imports: {e}")
+            return ""
+
     async def _modify_existing_file(
         self,
         file_path: str,
@@ -245,31 +299,59 @@ Generate ONLY the code content for {file_path}, no explanations or markdown:
 
             prompt = f"""You are an expert software developer. Modify the existing code according to the requirements.
 
-FILE PATH: {file_path}
-CHANGES NEEDED: {changes_needed}
+## CRITICAL INSTRUCTIONS
+1. Make ONLY the changes specified in "CHANGES NEEDED" - don't refactor or "improve" unrelated code
+2. Preserve ALL existing functionality unless explicitly asked to change it
+3. Maintain the exact same code style, patterns, and structure as the original
+4. Ensure backward compatibility unless breaking changes are specified
+5. Add comprehensive error handling for new code
+6. Update/add type hints for modified functions
 
-EXISTING CODE:
+## FILE TO MODIFY
+FILE PATH: {file_path}
+
+## CHANGES NEEDED
+{changes_needed}
+
+## EXISTING CODE
 ```
 {existing_code}
 ```
 
-PROJECT CONTEXT:
+## PROJECT CONTEXT
 - Tech Stack: {project_context.get('tech_stack', 'Python')}
 - Coding Style: {project_context.get('coding_style', 'PEP 8')}
 
-IMPLEMENTATION PLAN EXCERPT:
+## IMPLEMENTATION PLAN EXCERPT
 {plan[:1500]}
 
-REQUIREMENTS:
+## MODIFICATION REQUIREMENTS
 1. Preserve existing functionality unless it needs to change
-2. Add requested features/modifications
-3. Maintain code style consistency
-4. Update imports if needed
+2. Add requested features/modifications exactly as specified
+3. Maintain exact code style consistency with existing code
+4. Update imports if needed (add new ones at top, maintain grouping)
 5. Add proper error handling for new code
-6. Keep or improve existing docstrings
-7. Ensure the code is complete and working
+6. Update or add docstrings for modified functions
+7. Add type hints for new parameters/returns
+8. Add logging for new operations
+9. Ensure backward compatibility
+10. Make the code complete and working
 
-Generate the COMPLETE modified file content (not just the changes), no explanations or markdown:
+## WHAT TO PRESERVE
+- Existing imports (unless adding new ones)
+- Existing function signatures (unless explicitly changing them)
+- Existing error handling patterns
+- Existing logging patterns
+- Existing code formatting and style
+
+## WHAT TO CHANGE
+- Only what's specified in "CHANGES NEEDED"
+- Add proper docstrings/comments for new code
+- Update related docstrings if behavior changes
+
+Generate the COMPLETE modified file content (not just the diff/changes).
+Do not include explanations or markdown formatting.
+Output the full working code:
 """
 
             response = await self.llm.ainvoke(prompt)

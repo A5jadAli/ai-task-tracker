@@ -74,6 +74,12 @@ class Task(Base):
     additional_context = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
 
+    # Implementation tracking
+    files_created = Column(JSON, default=list, nullable=True)
+    files_modified = Column(JSON, default=list, nullable=True)
+    implementation_summary = Column(Text, nullable=True)
+    test_results = Column(JSON, default=dict, nullable=True)
+
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(

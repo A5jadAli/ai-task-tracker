@@ -168,25 +168,147 @@ class TesterAgent:
     async def _generate_test_for_file(self, file_path: str, code: str) -> str:
         """Generate test code for a specific file"""
         try:
-            prompt = f"""You are an expert at writing unit tests. Generate comprehensive pytest tests for the following code.
+            # Determine test type based on file content
+            is_api = "APIRouter" in code or "FastAPI" in code or "@app" in code or "@router" in code
+            is_service = "service" in file_path.lower() or "class" in code.lower()
+            is_model = "BaseModel" in code or "SQLModel" in code or "models" in file_path.lower()
 
-FILE: {file_path}
+            test_type_guidance = ""
+            if is_api:
+                test_type_guidance = """
+## API/ROUTE TESTING GUIDANCE
+- Use FastAPI TestClient for endpoint testing
+- Test all HTTP methods (GET, POST, PUT, DELETE, PATCH)
+- Test success responses (200, 201, 204)
+- Test error responses (400, 404, 500)
+- Test authentication/authorization if present
+- Test request validation (valid/invalid data)
+- Test edge cases (empty data, wrong types, missing fields)
+- Mock dependencies and database calls
+"""
+            elif is_service:
+                test_type_guidance = """
+## SERVICE/BUSINESS LOGIC TESTING GUIDANCE
+- Test all public methods
+- Mock external dependencies (database, APIs, file system)
+- Test happy path and error scenarios
+- Test with various input combinations
+- Verify correct exception handling
+- Test async methods properly with pytest-asyncio
+"""
+            elif is_model:
+                test_type_guidance = """
+## MODEL/SCHEMA TESTING GUIDANCE
+- Test model validation (valid/invalid data)
+- Test required vs optional fields
+- Test field constraints (min/max, regex, etc.)
+- Test serialization/deserialization
+- Test relationships if database model
+"""
 
-CODE:
+            prompt = f"""You are an expert at writing comprehensive tests. Generate production-quality pytest tests for the following code.
+
+## FILE TO TEST
+{file_path}
+
+## CODE TO TEST
 ```python
-{code[:2000]}  # Limit to avoid token limits
+{code[:3000]}  # Increased limit for better context
 ```
 
-REQUIREMENTS:
-1. Use pytest framework
-2. Test all public functions and classes
-3. Include edge cases and error conditions
-4. Use proper fixtures if needed
-5. Add docstrings to test functions
-6. Make tests independent and isolated
-7. Include both positive and negative test cases
+{test_type_guidance}
 
-Generate ONLY the complete test file code, no explanations:
+## CRITICAL TESTING REQUIREMENTS
+1. Use pytest framework with modern best practices
+2. Import and test ALL public functions, classes, and methods
+3. Create comprehensive test coverage:
+   - Happy path (successful execution)
+   - Edge cases (boundary values, empty inputs, None values)
+   - Error cases (exceptions, invalid inputs, failed operations)
+   - Integration scenarios if applicable
+
+4. Use proper pytest features:
+   - fixtures for setup/teardown
+   - parametrize for multiple test cases
+   - marks (@pytest.mark.asyncio for async tests)
+   - mocking with pytest-mock or unittest.mock
+
+5. Test structure:
+   - One test class per class being tested (if applicable)
+   - Clear, descriptive test names (test_function_name_when_condition_then_result)
+   - Arrange-Act-Assert pattern
+   - Independent tests (no test depends on another)
+
+6. For API endpoints test:
+   - All HTTP status codes
+   - Request/response validation
+   - Authentication/authorization
+   - Error handling
+
+7. For services test:
+   - All public methods
+   - Success and failure scenarios
+   - Exception handling
+   - Mock external dependencies
+
+8. For models test:
+   - Field validation
+   - Required vs optional fields
+   - Data type constraints
+   - Custom validators
+
+9. Code quality:
+   - Add docstrings to test functions
+   - Use clear assertion messages
+   - Proper type hints
+   - Mock external dependencies (DB, APIs, files)
+
+10. Coverage goals:
+   - Aim for 100% coverage of public interfaces
+   - Test all code paths
+   - Test all error conditions
+
+## EXAMPLE STRUCTURE
+```python
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+from fastapi.testclient import TestClient  # for API tests
+import asyncio  # for async tests
+
+# Import what you're testing
+from your_module import YourClass, your_function
+
+@pytest.fixture
+def sample_data():
+    \"\"\"Fixture for test data\"\"\"
+    return {{"key": "value"}}
+
+class TestYourClass:
+    \"\"\"Test suite for YourClass\"\"\"
+
+    def test_method_success(self, sample_data):
+        \"\"\"Test method_name succeeds with valid input\"\"\"
+        # Arrange
+        obj = YourClass()
+
+        # Act
+        result = obj.method_name(sample_data)
+
+        # Assert
+        assert result is not None
+        assert result["key"] == "value"
+
+    def test_method_with_invalid_input_raises_error(self):
+        \"\"\"Test method_name raises ValueError for invalid input\"\"\"
+        obj = YourClass()
+
+        with pytest.raises(ValueError):
+            obj.method_name(None)
+```
+
+Generate ONLY the complete, production-ready test file code.
+Do not include explanations or markdown.
+Output raw Python code that can be directly saved to a file:
 """
 
             response = await self.llm.ainvoke(prompt)

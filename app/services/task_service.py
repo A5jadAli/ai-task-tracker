@@ -10,6 +10,7 @@ from app.agents.git_agent import GitAgent
 from app.agents.planner_agent import PlannerAgent
 from app.agents.developer_agent import DeveloperAgent
 from app.agents.tester_agent import TesterAgent
+from app.agents.validator_agent import ValidatorAgent
 from app.memory.project_memory import ProjectMemory
 from app.config import settings
 
@@ -30,6 +31,7 @@ class TaskService:
         self.planner_agent = PlannerAgent(self.llm)
         self.developer_agent = DeveloperAgent(self.llm)
         self.tester_agent = TesterAgent(self.llm)
+        self.validator_agent = ValidatorAgent(self.llm)
 
     async def execute_task(self, task_id: str):
         """Execute complete task workflow"""
@@ -207,7 +209,7 @@ class TaskService:
     async def _planning_step(
         self, task: Task, project: Project, repository_path: Path, feedback: str = None
     ):
-        """Planning step"""
+        """Planning step with validation"""
         try:
             self._update_task_status(
                 task, TaskStatus.PLANNING, "Generating implementation plan"
@@ -218,6 +220,9 @@ class TaskService:
             project_memory = ProjectMemory(str(project.id))
             project_context = await project_memory.get_context()
 
+            # Analyze codebase structure for validation
+            codebase_info = await self.planner_agent._analyze_codebase(repository_path)
+
             # Generate plan
             plan = await self.planner_agent.create_plan(
                 task_description=task.description,
@@ -225,6 +230,31 @@ class TaskService:
                 repository_path=repository_path,
                 feedback=feedback,
             )
+
+            # Validate plan against requirements
+            validation = await self.validator_agent.validate_plan(
+                plan=plan,
+                task_description=task.description,
+                codebase_info=codebase_info,
+            )
+
+            # Log validation results
+            logger.info(
+                f"[{task.id}] Plan validation: valid={validation.get('is_valid')}, "
+                f"score={validation.get('coverage_score')}"
+            )
+
+            # Add validation warnings to plan if any critical issues
+            critical_issues = [
+                issue for issue in validation.get("issues", [])
+                if issue.get("severity") == "critical"
+            ]
+
+            if critical_issues:
+                logger.warning(
+                    f"[{task.id}] Plan has {len(critical_issues)} critical issues"
+                )
+                # Could optionally re-generate plan here
 
             # Save plan
             plan_path = await self.planner_agent.save_plan(
@@ -238,7 +268,15 @@ class TaskService:
             self._update_task_status(
                 task, TaskStatus.AWAITING_APPROVAL, "Plan ready for review"
             )
-            self._log_event(task, "plan_generated", {"plan_path": plan_path})
+            self._log_event(
+                task,
+                "plan_generated",
+                {
+                    "plan_path": plan_path,
+                    "validation_score": validation.get("coverage_score", 0),
+                    "validation_issues": len(validation.get("issues", [])),
+                },
+            )
 
             logger.info(f"[{task.id}] Plan generated and saved: {plan_path}")
 
@@ -251,7 +289,7 @@ class TaskService:
     async def _development_step(
         self, task: Task, project: Project, repository_path: Path
     ):
-        """Development step"""
+        """Development step with validation"""
         try:
             self._update_task_status(
                 task, TaskStatus.IN_PROGRESS, "Implementing feature"
@@ -272,12 +310,33 @@ class TaskService:
                 repository_path=repository_path,
             )
 
+            # Store files info in task metadata for later use
+            task.files_created = result["files_created"]
+            task.files_modified = result["files_modified"]
+            task.implementation_summary = result["summary"]
+            self.db.commit()
+
+            # Validate implementation
+            validation = await self.validator_agent.validate_implementation(
+                plan=plan,
+                task_description=task.description,
+                files_created=result["files_created"],
+                files_modified=result["files_modified"],
+                repository_path=repository_path,
+            )
+
+            logger.info(
+                f"[{task.id}] Implementation validation: valid={validation.get('is_valid')}, "
+                f"score={validation.get('adherence_score')}"
+            )
+
             self._log_event(
                 task,
                 "development_completed",
                 {
                     "files_created": len(result["files_created"]),
                     "files_modified": len(result["files_modified"]),
+                    "validation_score": validation.get("adherence_score", 0),
                 },
             )
 
@@ -297,17 +356,22 @@ class TaskService:
             self._update_task_status(task, TaskStatus.TESTING, "Running tests")
             logger.info(f"[{task.id}] Testing started")
 
-            # Get files to test
-            plan = Path(task.plan_path).read_text(encoding="utf-8")
+            # Get files that were created/modified
+            files_created = getattr(task, "files_created", []) or []
+            files_modified = getattr(task, "files_modified", []) or []
 
             # Run tests
             test_results = await self.tester_agent.run_tests(
                 repository_path=repository_path,
-                files_modified=[],  # Will be detected by tester
-                files_created=[],
+                files_modified=files_modified,
+                files_created=files_created,
             )
 
             passed = test_results.get("all_passed", False)
+
+            # Store test results in task for report generation
+            task.test_results = test_results
+            self.db.commit()
 
             self._log_event(
                 task,
@@ -320,7 +384,8 @@ class TaskService:
             )
 
             logger.info(
-                f"[{task.id}] Testing completed: {'passed' if passed else 'failed'}"
+                f"[{task.id}] Testing completed: {'passed' if passed else 'failed'} "
+                f"({test_results.get('passed', 0)}/{test_results.get('total', 0)} tests)"
             )
 
             return passed
@@ -367,21 +432,35 @@ class TaskService:
             )
 
     async def _report_step(self, task: Task, project: Project):
-        """Generate completion report"""
+        """Generate completion report with actual test results"""
         try:
             logger.info(f"[{task.id}] Generating completion report")
 
             # Load plan
             plan = Path(task.plan_path).read_text(encoding="utf-8")
 
-            # Generate report
+            # Get actual test results from task
+            test_results = getattr(task, "test_results", None) or {
+                "passed": 0,
+                "failed": 0,
+                "total": 0,
+                "output": "No test results available",
+                "all_passed": False,
+            }
+
+            # Get implementation summary
+            implementation_summary = getattr(
+                task, "implementation_summary", "Implementation completed"
+            )
+
+            # Generate report with real data
             report = await self.planner_agent.generate_report(
                 task_description=task.description,
                 plan=plan,
-                implementation_summary="Implementation completed successfully",
-                test_results={"passed": 1, "failed": 0, "output": "All tests passed"},
-                commit_hash=task.commit_hash,
-                branch_name=task.branch_name,
+                implementation_summary=implementation_summary,
+                test_results=test_results,
+                commit_hash=task.commit_hash or "No commit",
+                branch_name=task.branch_name or "No branch",
             )
 
             # Save report
@@ -398,6 +477,7 @@ class TaskService:
 
         except Exception as e:
             logger.error(f"[{task.id}] Report generation failed: {e}")
+            logger.error(traceback.format_exc())
             # Don't fail the task for report generation issues
 
     def _update_task_status(
